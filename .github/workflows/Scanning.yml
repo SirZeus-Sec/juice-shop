@@ -1,0 +1,44 @@
+name: Secret Scanning and Notification
+
+on:
+  push:
+    branches:
+      - main
+      - test-secret-branch
+  pull_request:
+    branches:
+      - main
+      - test-secret-branch
+
+jobs:
+  secret-scanning:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.8'
+
+      - name: Install pre-commit and dependencies
+        run: |
+          pip install pre-commit
+          pre-commit install
+
+      - name: Run pre-commit hooks
+        run: pre-commit run --all-files
+
+      - name: Run Gitleaks Scan
+        run: |
+          curl -sSL https://github.com/zricethezav/gitleaks/releases/download/v8.9.0/gitleaks-linux-amd64 -o /usr/local/bin/gitleaks
+          chmod +x /usr/local/bin/gitleaks
+          gitleaks detect --source . --report-format json --report-path gitleaks-report.json || exit 0
+
+      - name: Send Telegram Notification if Secrets Found
+        if: failure()  # Only send message if the scan fails
+        run: |
+          curl -X POST "https://api.telegram.org/bot7357276704:AAFlF2d3tq9qj_C9hn4vfSJ5RDJEB9Z8rzk/sendMessage" \
+            -d "chat_id=${{ secrets.-1002413586935 }}" \
+            -d "text=🚨 Secret detected in the repository. Please review the changes. 🚨"
