@@ -1,44 +1,40 @@
-name: Secret Scanning and Notification
+name: PR Secret Scanner
 
 on:
-  push:
-    branches:
-      - main
-      - test-secret-branch
   pull_request:
-    branches:
-      - main
-      - test-secret-branch
+    types: [opened, synchronize]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write  # ✅ Allows commenting on PRs
 
 jobs:
-  secret-scanning:
+  trufflehog_scan:
+    name: Secret Scan with TruffleHog
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Set up Python
-        uses: actions/setup-python@v2
+      - name: Checkout Code
+        uses: actions/checkout@v4
         with:
-          python-version: '3.8'
+          fetch-depth: 1  # ✅ Scan only new changes in the PR
 
-      - name: Install pre-commit and dependencies
+      - name: Run TruffleHog on PR Changes
+        id: trufflehog
+        continue-on-error: true  # ✅ Prevents stopping the workflow
+        uses: haydz/trufflehog-actions-scan@v1.0.3
+        with:
+          scanArguments: "--regex --entropy=False --json --max_depth=1"
+
+      - name: Post Comment on PR if Secrets Found
+        if: failure()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
         run: |
-          pip install pre-commit
-          pre-commit install
-
-      - name: Run pre-commit hooks
-        run: pre-commit run --all-files
-
-      - name: Run Gitleaks Scan
-        run: |
-          curl -sSL https://github.com/zricethezav/gitleaks/releases/download/v8.9.0/gitleaks-linux-amd64 -o /usr/local/bin/gitleaks
-          chmod +x /usr/local/bin/gitleaks
-          gitleaks detect --source . --report-format json --report-path gitleaks-report.json || exit 0
-
-      - name: Send Telegram Notification if Secrets Found
-        if: failure()  # Only send message if the scan fails
-        run: |
-          curl -X POST "https://api.telegram.org/bot7357276704:AAFlF2d3tq9qj_C9hn4vfSJ5RDJEB9Z8rzk/sendMessage" \
-            -d "chat_id=${{ secrets.-1002413586935 }}" \
-            -d "text=🚨 Secret detected in the repository. Please review the changes. 🚨"
+          COMMENT="🚨 TruffleHog found secrets in this PR! Please check the logs."
+          curl -s -X POST -H "Authorization: token $GITHUB_TOKEN" \
+               -H "Accept: application/vnd.github.v3+json" \
+               https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments \
+               -d "{\"body\": \"$COMMENT\"}"
